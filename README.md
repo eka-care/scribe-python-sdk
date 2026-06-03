@@ -139,14 +139,32 @@ All three finish with `wait_for_results(session_id)`.
 
 ---
 
-## Known seam: streaming result retrieval
+## Streaming result retrieval — how it ties together
 
 Streaming reuses the telephony `/v1/stream/*` endpoints, which create the backend session
-*without* protocol auth (business id in the body). Reading those results back through the
-authenticated `/v1/sessions/{id}` path may require backend wiring to associate the streamed
-`session_id` with the caller. The SDK exposes `stream.session_id` so you can poll; if your
-backend doesn't yet resolve streamed sessions under protocol auth, treat this as a backend
-follow-up. The chunked and single paths have no such seam.
+*without* protocol auth (business id in the request body). Results are still read back through
+the **same** authenticated `GET /v1/sessions/{session_id}` path used by chunked/single — and it
+works with **no backend change**, because both sides hit the same `voice2rx_transactions` table
+keyed by the composite primary key `(session_id, b_id)`:
+
+- the stream session is created with `b_id` from your config (the request body), and
+- the protocol `GET` looks the transaction up by `(session_id, b-id-from-your-token)`.
+
+So the **one requirement** is:
+
+> The `b_id` in your config must be the **same business** as the `b-id` the gateway derives from
+> your Bearer token. Same `b_id` → the composite key matches → `wait_for_results(session_id)`
+> returns the templates. The protocol `GET` applies no extra `uuid`/owner filter.
+
+While the stream is live the session reads back as `initialized`/`processing` (non-terminal, so
+the SDK keeps polling); once the stream stops, the backend commits (`user_status=commit`) and the
+results become available. The chunked and single paths use the identical key, so all three modes
+behave the same way.
+
+> Security note (backend, not the SDK): the stream-create endpoint trusts the body `b_id` without
+> validating it against a token. That's a pre-existing backend design choice; if you want streamed
+> sessions authenticated at creation time, that's a backend follow-up — it doesn't affect how this
+> SDK retrieves results.
 
 ---
 

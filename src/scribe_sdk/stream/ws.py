@@ -10,10 +10,12 @@ Flow (reuses the same mechanism telephony providers use):
     3. send a "stop" event (or just disconnect) to finalize; the server flushes,
        commits the transaction, and queues transcription.
 
-Results are then retrieved by polling the protocol session (`session_id`) — note
-the session-model seam documented in the SDK README: stream sessions are created
-without protocol auth, so reading their results back via the authed `/v1/sessions`
-path may require backend wiring. The SDK exposes `session_id` so callers can poll.
+Results are retrieved by polling the protocol session (`session_id`) via the
+authenticated `GET /v1/sessions/{session_id}`. This works with no backend change:
+both the stream-create and the protocol-get sides key the same transactions table
+by `(session_id, b_id)`. The only requirement is that the `b_id` used to create
+the stream session is the same business as the `b-id` the gateway derives from
+your token — see the README's "Streaming result retrieval" section.
 """
 
 from __future__ import annotations
