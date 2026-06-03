@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# venv / uv
+.venv/
+venv/
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# secrets / local config
+.env
+scribe.config.json
+scribe.config.yaml
+scribe.config.yml
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

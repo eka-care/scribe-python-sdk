@@ -1,0 +1,23 @@
+# Scribe SDK config (YAML). Copy to scribe.config.yaml and fill in.
+# Resolution precedence: explicit kwargs > env vars > this file > defaults.
+
+base_url: https://api.eka.care/voice
+auth_base_url: https://api.eka.care
+
+client_id: YOUR_CLIENT_ID
+client_secret: YOUR_CLIENT_SECRET
+b_id: YOUR_BUSINESS_ID          # required only for streaming
+
+# Used by create_session() when templates= is not passed:
+default_templates:
+  - soap
+  - medications
+default_model: lite             # lite | pro
+default_language_hint:
+  - en
+transcript_language: en
+
+# Local/dev only: send jwt-payload directly (skips client_id/secret login).
+# jwt_payload:
+#   b-id: "YOUR_BUSINESS_ID"
+#   iss: "dev"
