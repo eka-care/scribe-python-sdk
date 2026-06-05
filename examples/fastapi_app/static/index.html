@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scribe SDK — client-side VAD demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 1.4rem; }
+    .row { display: flex; gap: 12px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+    button { padding: 9px 14px; font-size: .95rem; border-radius: 8px; border: 1px solid #ccc; cursor: pointer; background: #fff; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; }
+    legend { font-weight: 600; padding: 0 6px; }
+    #status { font-weight: 600; }
+    code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; }
+    pre { background: #f6f8fa; padding: 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+    .hint { color: #666; font-size: .85rem; margin: 4px 0 0; }
+  </style>
+</head>
+<body>
+  <h1>Scribe SDK — client-side VAD demo</h1>
+  <p>The browser captures audio and sends it to a Python relay that uses the SDK.
+     Voice activity detection runs <strong>on the server (in the SDK)</strong> — the
+     scribe backend only ever receives speech chunks. Your
+     <code>client_id</code> / <code>secret</code> stay server-side.</p>
+
+  <fieldset>
+    <legend>Chunked — file or mic (VAD in the SDK)</legend>
+
+    <div class="row">
+      <button id="startSession">1 · Start session</button>
+      <span>session: <code id="sessionId">—</code></span>
+    </div>
+
+    <div class="row">
+      <input type="file" id="fileInput" accept="audio/*" disabled />
+      <button id="uploadFile" disabled>2a · Upload audio file</button>
+    </div>
+    <p class="hint">Pick a wav/mp3/m4a/webm/ogg file. The SDK decodes + VADs it and
+       uploads the speech chunks. You can upload more than one file.</p>
+
+    <div class="row">
+      <button id="recStart" disabled>2b · Start mic recording</button>
+      <button id="recStop" disabled>■ Stop &amp; upload</button>
+    </div>
+    <p class="hint">Records a blob in the browser; the SDK VADs it server-side too.</p>
+
+    <div class="row">
+      <button id="endSession" disabled>3 · End session &amp; get results</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Live stream — mic over WebSocket</legend>
+    <div class="row">
+      <button id="streamStart">● Start streaming</button>
+      <button id="streamStop" disabled>■ Stop streaming</button>
+    </div>
+    <p class="hint">Streams raw PCM16 @ 16 kHz frames to the SDK's streaming session.</p>
+  </fieldset>
+
+  <div class="row">Status: <span id="status">idle</span></div>
+  <h3>Result</h3>
+  <pre id="result">—</pre>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

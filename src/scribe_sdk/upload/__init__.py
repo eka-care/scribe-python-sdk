@@ -22,6 +22,5 @@ def content_type_for(filename: str) -> str:
 # Submodule imports come after `content_type_for` is defined to avoid a circular
 # import (the submodules import this helper from the package).
 from .chunked import ChunkedUploader  # noqa: E402
-from .single import SingleUploader  # noqa: E402
 
-__all__ = ["ChunkedUploader", "SingleUploader", "content_type_for"]
+__all__ = ["ChunkedUploader", "content_type_for"]

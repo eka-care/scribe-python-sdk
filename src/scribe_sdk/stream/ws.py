@@ -2,7 +2,7 @@
 
 Flow (reuses the same mechanism telephony providers use):
 
-    1. POST /v1/stream/sessions {b_id, session_id?, ...}
+    1. POST /v1/stream/sessions {session_id?, ...}
          -> {stream_id, wss_url, session_id}
     2. connect wss_url, send audio frames:
          - raw 16-bit LE PCM, mono, 16 kHz  (default, sent as binary frames), or
@@ -11,11 +11,10 @@ Flow (reuses the same mechanism telephony providers use):
        commits the transaction, and queues transcription.
 
 Results are retrieved by polling the protocol session (`session_id`) via the
-authenticated `GET /v1/sessions/{session_id}`. This works with no backend change:
-both the stream-create and the protocol-get sides key the same transactions table
-by `(session_id, b_id)`. The only requirement is that the `b_id` used to create
-the stream session is the same business as the `b-id` the gateway derives from
-your token — see the README's "Streaming result retrieval" section.
+authenticated `GET /v1/sessions/{session_id}`. The business id is taken from your
+token on both the stream-create and protocol-get sides (the SDK never sends a
+configured `b_id`), so the streamed session is written under, and read back by,
+the same business — see the README's "Streaming result retrieval" section.
 """
 
 from __future__ import annotations
@@ -45,11 +44,16 @@ class StreamUploader:
         provider: str | None = None,
         additional_data: dict[str, Any] | None = None,
     ) -> CreateStreamSessionResponse:
-        """Create a stream session and obtain the WSS URL."""
-        resolved_b_id = b_id or self._t.config.require_b_id()
+        """Create a stream session and obtain the WSS URL.
+
+        `b_id` is not required: the backend resolves it (and `uuid`) from the
+        jwt-payload derived from your Bearer token (or your dev jwt_payload). The
+        optional `b_id` kwarg only exists for advanced/raw-backend callers that
+        need to set it explicitly (telephony-style).
+        """
         req = CreateStreamSessionRequest(
             session_id=session_id,
-            b_id=resolved_b_id,
+            b_id=b_id,
             uuid=uuid,
             provider=provider,
             additional_data=additional_data,

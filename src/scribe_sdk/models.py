@@ -12,10 +12,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-# --------------------------------------------------------------------------- #
-# Enums
-# --------------------------------------------------------------------------- #
 class SessionMode(str, Enum):
     CONSULTATION = "consultation"
     DICTATION = "dictation"
@@ -27,8 +23,10 @@ class Model(str, Enum):
 
 
 class UploadType(str, Enum):
+    # NOTE: there is intentionally no `single` (whole-file) upload type. The SDK
+    # never sends un-VADded audio to the backend — voice activity detection runs
+    # client-side (see scribe_sdk.audio) and only speech-bounded chunks are sent.
     CHUNKED = "chunked"
-    SINGLE = "single"
     STREAM = "stream"
 
 
@@ -49,7 +47,6 @@ class SessionStatus(str, Enum):
     EXPIRED = "expired"
 
 
-# Statuses that mean "stop polling".
 TERMINAL_STATUSES = {
     SessionStatus.COMPLETED,
     SessionStatus.PARTIAL,
@@ -62,9 +59,6 @@ class _Wire(BaseModel):
     model_config = ConfigDict(extra="allow", use_enum_values=True)
 
 
-# --------------------------------------------------------------------------- #
-# Requests
-# --------------------------------------------------------------------------- #
 class CreateSessionRequest(_Wire):
     session_id: str | None = Field(default=None, min_length=16, max_length=64)
     session_mode: SessionMode = SessionMode.DICTATION
@@ -93,9 +87,6 @@ class PatchSessionRequest(_Wire):
     templates: list[str] | None = None
 
 
-# --------------------------------------------------------------------------- #
-# Responses
-# --------------------------------------------------------------------------- #
 class CreateSessionResponse(_Wire):
     session_id: str
     status: str
@@ -172,13 +163,9 @@ class TemplateInfo(_Wire):
 class TemplatesListResponse(_Wire):
     templates: list[TemplateInfo]
 
-
-# --------------------------------------------------------------------------- #
-# Streaming
-# --------------------------------------------------------------------------- #
 class CreateStreamSessionRequest(_Wire):
     session_id: str | None = None
-    b_id: str
+    b_id: str | None = None
     uuid: str | None = None
     caller_number: str | None = None
     provider: str | None = None

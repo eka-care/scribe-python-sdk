@@ -47,12 +47,30 @@ async def test_upload_chunks_iterable_then_end(client, base_url):
 
 
 @respx.mock
-async def test_single_upload_then_end(client, base_url):
-    respx.post(f"{base_url}/v1/sessions/ses_x/audio/visit.wav").mock(
-        return_value=httpx.Response(200, json={"session_id": "ses_x", "success": True})
-    )
+async def test_upload_chunks_start_index_and_no_end(client, base_url):
+    """Separated flow: upload chunks at an offset without auto-ending."""
+    for i in (2, 3):
+        respx.post(f"{base_url}/v1/sessions/ses_x/audio/chunk_{i}.wav").mock(
+            return_value=httpx.Response(200, json={"session_id": "ses_x", "success": True})
+        )
     end = respx.post(f"{base_url}/v1/sessions/ses_x/end").mock(
         return_value=httpx.Response(202, json={"session_id": "ses_x", "status": "processing"})
     )
-    await client.upload_file("ses_x", b"RIFF....", filename="visit.wav")
-    assert end.called
+
+    async def chunks():
+        for b in (b"a", b"b"):
+            yield b
+
+    n = await client.upload_chunks("ses_x", chunks(), start_index=2, end_session=False)
+    assert n == 2
+    assert not end.called
+
+
+def test_no_single_upload_surface():
+    """The SDK must not expose any whole-file / server-side-VAD upload."""
+    from scribe_sdk import AsyncScribeClient, ScribeClient
+    from scribe_sdk.models import UploadType
+
+    assert not hasattr(AsyncScribeClient, "upload_file")
+    assert not hasattr(ScribeClient, "upload_file")
+    assert not hasattr(UploadType, "SINGLE")

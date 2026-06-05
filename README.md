@@ -4,12 +4,17 @@ Python SDK for the **MedScribeAlliance Protocol v0.1** — the scribe protocol e
 Voice2Rx / eka.care. It turns medical audio (consultations, dictation) into structured
 template results (SOAP notes, medication lists, etc.).
 
-Use it from your server, a CLI, or behind a browser relay to:
+Use it from your server, a CLI, or behind a FastAPI relay to:
 
 - **create sessions** with your configured default templates (or per-call overrides),
-- **upload audio two ways** — *chunked* (client-side VAD → `chunk_0`, `chunk_1`, …) or
-  *streaming* (real-time WebSocket), plus a simple *single-file* mode,
+- **send audio two ways** — *chunked* (client-side VAD → `chunk_0`, `chunk_1`, …) or
+  *streaming* (real-time WebSocket),
 - **poll for results**.
+
+**Voice activity detection always runs client-side.** The SDK decodes and VADs audio
+on your machine and POSTs only speech-bounded chunks (or streams raw PCM) — the scribe
+backend never receives an un-VADded whole file. There is deliberately no single/whole-file
+upload.
 
 Async-first (`httpx` + `websockets`) with a synchronous facade for scripts and the CLI.
 
@@ -48,7 +53,6 @@ A `scribe.config.json` (or `.yaml`):
   "auth_base_url": "https://api.eka.care",
   "client_id": "YOUR_CLIENT_ID",
   "client_secret": "YOUR_CLIENT_SECRET",
-  "b_id": "YOUR_BUSINESS_ID",
   "default_templates": ["soap", "medications"],
   "default_model": "lite",
   "default_language_hint": ["en"],
@@ -61,7 +65,6 @@ Or via environment (`.env` is auto-loaded):
 ```bash
 SCRIBE_CLIENT_ID=...
 SCRIBE_CLIENT_SECRET=...
-SCRIBE_B_ID=...
 SCRIBE_DEFAULT_TEMPLATES=soap,medications
 ```
 
@@ -81,29 +84,39 @@ that header directly and skip login.
 
 ## Usage
 
-### Single-file upload (sync)
+Every flow keeps the steps separated — **start session → send audio → end session →
+poll results** (the poller waits 1s between checks).
+
+### File upload with client-side VAD (sync)
 
 ```python
-from scribe_sdk import ScribeClient
+from scribe_sdk import ScribeClient   # decode + VAD need the [audio] extra
 
 with ScribeClient(config_path="scribe.config.json") as client:
-    s = client.create_session(upload_type="single", communication_protocol="http")
-    client.upload_file(s.session_id, "visit.wav")        # backend VADs it, ends session
+    s = client.create_session(upload_type="chunked", communication_protocol="http")
+    n = client.upload_audio_file(s.session_id, "visit.wav", end_session=False)  # VAD locally
+    client.end_session(s.session_id, audio_files_sent=n)
     result = client.wait_for_results(s.session_id)
     print(result.status, result.templates)
 ```
 
-### Chunked upload (async, client-side VAD)
+### File / PCM upload (async)
 
 ```python
-from scribe_sdk import AsyncScribeClient
-from scribe_sdk.audio import vad_chunks_from_file   # requires [audio]
+from scribe_sdk import AsyncScribeClient   # requires [audio]
 
 async with AsyncScribeClient(config_path="scribe.config.json") as client:
     s = await client.create_session(upload_type="chunked", communication_protocol="http")
-    n = await client.upload_chunks(s.session_id, vad_chunks_from_file("visit.wav"))
+    # from a file/bytes …
+    n = await client.upload_audio_file(s.session_id, "visit.wav", end_session=False)
+    # … or from raw 16-bit mono PCM you already captured:
+    # n = await client.upload_pcm(s.session_id, pcm_bytes, sample_rate=16000, end_session=False)
+    await client.end_session(s.session_id, audio_files_sent=n)
     result = await client.wait_for_results(s.session_id)
 ```
+
+> Lower-level: pass your own VAD chunk iterator to `upload_chunks(...)` — see
+> `scribe_sdk.audio.vad_chunks_from_file` / `vad_chunks_from_pcm`.
 
 ### Streaming (async, real-time WebSocket)
 
@@ -120,9 +133,10 @@ async with AsyncScribeClient(config_path="scribe.config.json") as client:
 
 ## Examples
 
-- `examples/cli/` — interactive CLI: `scribe --mode chunked|stream`.
-- `examples/browser_relay/` — JS frontend (captures mic) + FastAPI relay server that uses
-  the SDK. Keeps `client_id`/`secret` server-side.
+- `examples/cli/` — the bundled `scribe` CLI: `--mode chunked|stream` (mic/file VAD + WS).
+- `examples/fastapi_app/` — FastAPI server + minimal UI (start session, upload file, mic
+  record, live stream, end, poll). VAD runs in the SDK on the server; keeps
+  `client_id`/`secret` server-side.
 - `examples/server_side/` — minimal "call the SDK from your backend" script.
 
 ---
@@ -131,40 +145,33 @@ async with AsyncScribeClient(config_path="scribe.config.json") as client:
 
 | Mode | When | How |
 |---|---|---|
-| **single** | short, pre-recorded clips | one POST; backend does VAD chunking |
-| **chunked** | long recordings, reliable delivery | client VADs → `chunk_0..N` POSTs → `end` |
-| **streaming** | live/real-time | WebSocket frames → `stop` |
+| **chunked** | files & most recordings | client VADs → `chunk_0..N` POSTs → `end` |
+| **streaming** | live/real-time | WebSocket raw-PCM frames → `stop` |
 
-All three finish with `wait_for_results(session_id)`.
+Both finish with `wait_for_results(session_id)`. VAD is always client-side — there is no
+whole-file/server-VAD mode.
 
 ---
 
 ## Streaming result retrieval — how it ties together
 
-Streaming reuses the telephony `/v1/stream/*` endpoints, which create the backend session
-*without* protocol auth (business id in the request body). Results are still read back through
-the **same** authenticated `GET /v1/sessions/{session_id}` path used by chunked/single — and it
-works with **no backend change**, because both sides hit the same `voice2rx_transactions` table
-keyed by the composite primary key `(session_id, b_id)`:
+Streaming reuses the telephony `/v1/stream/*` endpoints. Results are read back through the
+**same** authenticated `GET /v1/sessions/{session_id}` path used by chunked upload, because both
+sides hit the same `voice2rx_transactions` table keyed by the composite primary key
+`(session_id, b_id)`.
 
-- the stream session is created with `b_id` from your config (the request body), and
-- the protocol `GET` looks the transaction up by `(session_id, b-id-from-your-token)`.
+You **never configure a business id in the SDK** — `b_id` (and `uuid`) come from your token. The
+stream-create endpoint reads them from the jwt-payload the gateway injects from your Bearer token,
+so the streamed session is written under the business the gateway authenticated, which is exactly
+what `GET /v1/sessions/{session_id}` then looks up. The protocol `GET` applies no extra
+`uuid`/owner filter. (For unauthenticated/raw-backend callers — e.g. telephony — the endpoint
+falls back to a `b_id` posted in the body; the SDK exposes an optional `b_id=` kwarg on
+`open_stream()` for that case only.)
 
-So the **one requirement** is:
-
-> The `b_id` in your config must be the **same business** as the `b-id` the gateway derives from
-> your Bearer token. Same `b_id` → the composite key matches → `wait_for_results(session_id)`
-> returns the templates. The protocol `GET` applies no extra `uuid`/owner filter.
-
-While the stream is live the session reads back as `initialized`/`processing` (non-terminal, so
-the SDK keeps polling); once the stream stops, the backend commits (`user_status=commit`) and the
-results become available. The chunked and single paths use the identical key, so all three modes
-behave the same way.
-
-> Security note (backend, not the SDK): the stream-create endpoint trusts the body `b_id` without
-> validating it against a token. That's a pre-existing backend design choice; if you want streamed
-> sessions authenticated at creation time, that's a backend follow-up — it doesn't affect how this
-> SDK retrieves results.
+So with token auth, streaming and `wait_for_results(stream.session_id)` work out of the box. While
+the stream is live the session reads back as `initialized`/`processing` (non-terminal, so the SDK
+keeps polling); once the stream stops, the backend commits (`user_status=commit`) and the results
+become available. Both modes use the identical key, so they behave the same way.
 
 ---
 

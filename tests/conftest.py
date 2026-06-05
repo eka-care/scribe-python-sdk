@@ -24,7 +24,6 @@ async def client():
     c = AsyncScribeClient(
         base_url=BASE_URL,
         jwt_payload={"b-id": "biz_test", "iss": "test"},
-        b_id="biz_test",
         default_templates=["soap"],
         poll_interval=0.0,
         poll_timeout=5.0,

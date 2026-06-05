@@ -1,18 +1,28 @@
-// Browser frontend for the Scribe SDK relay demo.
-// Mode 1: MediaRecorder -> POST blob -> server does single upload.
-// Mode 2: WebAudio PCM16 @16kHz -> WS -> server relays into an SDK stream.
+// Browser frontend for the Scribe SDK demo.
+//
+// Chunked flow (steps kept separate):
+//   1. POST /api/sessions                  -> session_id
+//   2. POST /api/sessions/{id}/audio       -> SDK VADs the file, uploads chunks
+//   3. POST /api/sessions/{id}/end         -> end the session
+//   4. GET  /api/sessions/{id}/results     -> poll every 1s until terminal
+//
+// Live stream flow: WS /api/stream with raw PCM16 @16kHz frames, then poll.
 
 const statusEl = document.getElementById("status");
 const resultEl = document.getElementById("result");
+const sessionIdEl = document.getElementById("sessionId");
 
 const setStatus = (s) => (statusEl.textContent = s);
 const showResult = (obj) => (resultEl.textContent = JSON.stringify(obj, null, 2));
+const $ = (id) => document.getElementById(id);
 
-// Poll the relay until the session reaches a terminal status.
-async function pollResults(sessionId) {
+let sessionId = null;
+
+// Poll the relay every 1s until the session reaches a terminal status.
+async function pollResults(sid) {
   const terminal = new Set(["completed", "partial", "failed", "expired"]);
-  for (let i = 0; i < 120; i++) {
-    const res = await fetch(`/api/results/${sessionId}`);
+  for (let i = 0; i < 600; i++) {
+    const res = await fetch(`/api/sessions/${sid}/results`);
     const body = await res.json();
     setStatus(`processing… (${body.status})`);
     if (terminal.has(body.status)) {
@@ -20,17 +30,57 @@ async function pollResults(sessionId) {
       showResult(body);
       return;
     }
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise((r) => setTimeout(r, 1000)); // wait 1s (client-side)
   }
   setStatus("timed out waiting for results");
 }
 
 // ----------------------------------------------------------------------------
-// Mode 1 — record & upload
+// Chunked flow
 // ----------------------------------------------------------------------------
+function setChunkedEnabled(haveSession) {
+  $("fileInput").disabled = !haveSession;
+  $("uploadFile").disabled = !haveSession;
+  $("recStart").disabled = !haveSession;
+  $("endSession").disabled = !haveSession;
+}
+
+$("startSession").onclick = async () => {
+  setStatus("starting session…");
+  const res = await fetch("/api/sessions", { method: "POST" });
+  const body = await res.json();
+  sessionId = body.session_id;
+  sessionIdEl.textContent = sessionId;
+  setChunkedEnabled(true);
+  showResult("—");
+  setStatus("session started — upload a file or record from the mic");
+};
+
+$("uploadFile").onclick = async () => {
+  const file = $("fileInput").files[0];
+  if (!file || !sessionId) return;
+  setStatus(`uploading & VADing ${file.name}…`);
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const res = await fetch(`/api/sessions/${sessionId}/audio`, { method: "POST", body: form });
+  const body = await res.json();
+  setStatus(`uploaded ${body.chunks_uploaded} chunk(s) — ${body.total_chunks} total. Add more or end.`);
+};
+
+$("endSession").onclick = async () => {
+  if (!sessionId) return;
+  setStatus("ending session…");
+  await fetch(`/api/sessions/${sessionId}/end`, { method: "POST" });
+  setChunkedEnabled(false);
+  const sid = sessionId;
+  sessionId = null;
+  await pollResults(sid);
+};
+
+// Mic recording -> blob -> same /audio endpoint (the SDK VADs it server-side).
 let mediaRecorder, recChunks = [];
 
-document.getElementById("recStart").onclick = async () => {
+$("recStart").onclick = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   recChunks = [];
   mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
@@ -38,29 +88,31 @@ document.getElementById("recStart").onclick = async () => {
   mediaRecorder.onstop = async () => {
     stream.getTracks().forEach((t) => t.stop());
     const blob = new Blob(recChunks, { type: "audio/webm" });
-    setStatus("uploading…");
+    setStatus("uploading & VADing recording…");
     const form = new FormData();
     form.append("file", blob, "recording.webm");
-    const res = await fetch("/api/upload", { method: "POST", body: form });
-    const { session_id } = await res.json();
-    await pollResults(session_id);
+    const res = await fetch(`/api/sessions/${sessionId}/audio`, { method: "POST", body: form });
+    const body = await res.json();
+    setStatus(`uploaded ${body.chunks_uploaded} chunk(s) — ${body.total_chunks} total. Add more or end.`);
   };
   mediaRecorder.start();
   setStatus("recording…");
-  toggle("rec", true);
+  $("recStart").disabled = true;
+  $("recStop").disabled = false;
 };
 
-document.getElementById("recStop").onclick = () => {
+$("recStop").onclick = () => {
   mediaRecorder && mediaRecorder.stop();
-  toggle("rec", false);
+  $("recStart").disabled = false;
+  $("recStop").disabled = true;
 };
 
 // ----------------------------------------------------------------------------
-// Mode 2 — live stream over WebSocket
+// Live stream flow
 // ----------------------------------------------------------------------------
 let audioCtx, sourceNode, processorNode, ws, mediaStream, streamSessionId;
 
-document.getElementById("streamStart").onclick = async () => {
+$("streamStart").onclick = async () => {
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
   // Request a 16 kHz context so no manual resampling is needed.
@@ -92,11 +144,13 @@ document.getElementById("streamStart").onclick = async () => {
 
   sourceNode.connect(processorNode);
   processorNode.connect(audioCtx.destination);
-  toggle("stream", true);
+  $("streamStart").disabled = true;
+  $("streamStop").disabled = false;
 };
 
-document.getElementById("streamStop").onclick = async () => {
-  toggle("stream", false);
+$("streamStop").onclick = async () => {
+  $("streamStart").disabled = false;
+  $("streamStop").disabled = true;
   try { processorNode && processorNode.disconnect(); } catch {}
   try { sourceNode && sourceNode.disconnect(); } catch {}
   mediaStream && mediaStream.getTracks().forEach((t) => t.stop());
@@ -110,8 +164,3 @@ document.getElementById("streamStop").onclick = async () => {
     await pollResults(streamSessionId);
   }
 };
-
-function toggle(prefix, running) {
-  document.getElementById(`${prefix}Start`).disabled = running;
-  document.getElementById(`${prefix}Stop`).disabled = !running;
-}

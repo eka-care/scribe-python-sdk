@@ -26,7 +26,7 @@ def test_sync_client_create_and_get():
         jwt_payload={"b-id": "biz", "iss": "t"},
         default_templates=["soap"],
     ) as client:
-        session = client.create_session(upload_type="single", communication_protocol="http")
+        session = client.create_session(upload_type="chunked", communication_protocol="http")
         assert session.session_id == "ses_s"
         result = client.wait_for_results("ses_s", interval=0.0)
         assert result.is_complete

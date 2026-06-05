@@ -38,7 +38,6 @@ class ScribeConfig:
     client_id: str | None = None
     client_secret: str | None = None
     api_key: str | None = None
-    b_id: str | None = None  # business id, required for the streaming path
     base_url: str = DEFAULT_BASE_URL  # protocol base, e.g. https://api.eka.care/voice
     auth_base_url: str = DEFAULT_AUTH_BASE_URL  # connect-auth host
 
@@ -55,10 +54,9 @@ class ScribeConfig:
 
     # Behaviour
     request_timeout: float = 60.0
-    poll_interval: float = 3.0
+    poll_interval: float = 1.0  # wait 1s between result polls (client-side)
     poll_timeout: float = 600.0
 
-    # ------------------------------------------------------------------ #
     @classmethod
     def load(
         cls,
@@ -74,7 +72,7 @@ class ScribeConfig:
         data: dict[str, Any] = {}
         data.update(_from_file(path))
         data.update(_from_env())
-        # Drop None overrides so they don't clobber file/env values.
+       
         data.update({k: v for k, v in overrides.items() if v is not None})
 
         known = {f.name for f in fields(cls)}
@@ -83,7 +81,6 @@ class ScribeConfig:
             raise ConfigError(f"Unknown config keys: {sorted(unknown)}")
         return cls(**data)
 
-    # ------------------------------------------------------------------ #
     def require_credentials(self) -> None:
         """Validate that an auth path is available."""
         if self.jwt_payload is not None:
@@ -93,11 +90,6 @@ class ScribeConfig:
                 "Missing credentials: set client_id and client_secret (or pass a "
                 "jwt_payload for direct/dev auth)."
             )
-
-    def require_b_id(self) -> str:
-        if not self.b_id:
-            raise ConfigError("Streaming requires `b_id` (business id) in config.")
-        return self.b_id
 
 
 def _from_file(path: str | Path | None) -> dict[str, Any]:
@@ -135,12 +127,10 @@ def _resolve_file(path: str | Path | None) -> Path | None:
     return None
 
 
-# Env var name -> (config field, parser)
 _ENV_FIELDS: dict[str, tuple[str, Any]] = {
     f"{_ENV_PREFIX}CLIENT_ID": ("client_id", str),
     f"{_ENV_PREFIX}CLIENT_SECRET": ("client_secret", str),
     f"{_ENV_PREFIX}API_KEY": ("api_key", str),
-    f"{_ENV_PREFIX}B_ID": ("b_id", str),
     f"{_ENV_PREFIX}BASE_URL": ("base_url", str),
     f"{_ENV_PREFIX}AUTH_BASE_URL": ("auth_base_url", str),
     f"{_ENV_PREFIX}DEFAULT_TEMPLATES": ("default_templates", "csv"),

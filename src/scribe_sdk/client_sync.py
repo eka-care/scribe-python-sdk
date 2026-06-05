@@ -6,8 +6,8 @@ writing `async`/`await`. WebSocket streaming is supported through a
 `SyncStreamSession` that proxies each call onto the same loop.
 
     client = ScribeClient(config_path="scribe.config.json")
-    session = client.create_session(upload_type="single", communication_protocol="http")
-    client.upload_file(session.session_id, "visit.wav")
+    session = client.create_session(upload_type="chunked", communication_protocol="http")
+    client.upload_audio_file(session.session_id, "visit.wav")  # VAD locally, upload chunks
     result = client.wait_for_results(session.session_id)
     client.close()
 """
@@ -54,21 +54,44 @@ class ScribeClient:
     def create_session(self, **kwargs: Any) -> CreateSessionResponse:
         return self._portal.call(lambda: self._async.create_session(**kwargs))
 
-    def upload_file(
+    def upload_audio_file(
         self,
         session_id: str,
         audio: bytes | str | Path,
         *,
-        filename: str | None = None,
-        content_type: str | None = None,
+        prefix: str = "chunk",
+        start_index: int = 0,
         end_session: bool = True,
-    ) -> UploadAudioResponse:
+    ) -> int:
+        """Decode + VAD an audio file/bytes locally, upload the speech chunks."""
         return self._portal.call(
-            lambda: self._async.upload_file(
+            lambda: self._async.upload_audio_file(
                 session_id,
                 audio,
-                filename=filename,
-                content_type=content_type,
+                prefix=prefix,
+                start_index=start_index,
+                end_session=end_session,
+            )
+        )
+
+    def upload_pcm(
+        self,
+        session_id: str,
+        pcm: bytes,
+        *,
+        sample_rate: int = 16000,
+        prefix: str = "chunk",
+        start_index: int = 0,
+        end_session: bool = True,
+    ) -> int:
+        """VAD raw 16-bit mono PCM locally, upload the speech chunks."""
+        return self._portal.call(
+            lambda: self._async.upload_pcm(
+                session_id,
+                pcm,
+                sample_rate=sample_rate,
+                prefix=prefix,
+                start_index=start_index,
                 end_session=end_session,
             )
         )
@@ -108,7 +131,6 @@ class ScribeClient:
             )
         )
 
-    # ------------------------------------------------------------------ #
     def close(self) -> None:
         try:
             self._portal.call(self._async.aclose)

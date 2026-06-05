@@ -6,7 +6,6 @@ auth_base_url: https://api.eka.care
 
 client_id: YOUR_CLIENT_ID
 client_secret: YOUR_CLIENT_SECRET
-b_id: YOUR_BUSINESS_ID          # required only for streaming
 
 # Used by create_session() when templates= is not passed:
 default_templates:

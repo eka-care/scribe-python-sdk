@@ -20,8 +20,8 @@ from .encode import (
 )
 
 # Mirror the backend's chunking envelope (see vad_chunking_service.py).
-MAX_CHUNK_SECONDS = 29.99
-PREFERRED_CHUNK_SECONDS = 15.0
+MAX_CHUNK_SECONDS = 24.0
+PREFERRED_CHUNK_SECONDS =10.0
 
 _model = None
 

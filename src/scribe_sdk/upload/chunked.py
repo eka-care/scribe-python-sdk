@@ -12,14 +12,16 @@ SDK stays free of native deps.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from typing import Union
 
 from ..http import Transport
 from ..models import UploadAudioResponse
 from . import content_type_for
 
-ChunkSource = Union[AsyncIterable[bytes], "AsyncIterator[bytes]"]
+# Accepts either an async stream of chunks (live capture) or a plain sync
+# iterable/list (a fully VAD'd file) — `_as_async_iter` normalizes both.
+ChunkSource = Union[AsyncIterable[bytes], "AsyncIterator[bytes]", Iterable[bytes]]
 
 
 class ChunkedUploader:

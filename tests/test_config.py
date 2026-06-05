@@ -58,9 +58,3 @@ def test_require_credentials():
     ScribeConfig(client_id="a", client_secret="b").require_credentials()
     # jwt_payload path is allowed without client creds
     ScribeConfig(jwt_payload={"b-id": "x"}).require_credentials()
-
-
-def test_require_b_id():
-    with pytest.raises(ConfigError):
-        ScribeConfig().require_b_id()
-    assert ScribeConfig(b_id="biz").require_b_id() == "biz"

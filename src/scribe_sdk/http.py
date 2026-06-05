@@ -48,7 +48,7 @@ class Transport:
         url = self.url(path)
         base_headers = dict(headers or {})
 
-        for attempt in range(2):  # initial try + one retry after forced refresh
+        for attempt in range(2):  
             auth = await self._auth.auth_headers(force_refresh=attempt == 1)
             merged = {**auth, **base_headers}
             try:

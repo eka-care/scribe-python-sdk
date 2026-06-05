@@ -86,9 +86,10 @@ class AuthProvider:
 
     async def _refresh(self) -> None:
         await self._token_request(
-            self._auth_url("/connect-auth/v1/account/refresh"),
-            {"refresh_token": self._refresh_token},
-            action="refresh",
+            self._auth_url("/connect-auth/v1/account/refresh-token"),{
+                "refresh_token" : self._refresh_token,
+                "access_token": self._access_token,
+            }
         )
 
     async def _token_request(self, url: str, body: dict, *, action: str) -> None:

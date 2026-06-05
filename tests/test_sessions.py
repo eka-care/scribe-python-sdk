@@ -17,7 +17,7 @@ async def test_create_session_uses_default_templates(client, base_url):
             },
         )
     )
-    s = await client.create_session(upload_type="single", communication_protocol="http")
+    s = await client.create_session(upload_type="chunked", communication_protocol="http")
     assert s.session_id == "ses_abc"
     body = respx.calls.last.request.content
     assert b'"soap"' in body  # default template applied
