@@ -10,6 +10,11 @@ Config file may be JSON or YAML and is discovered (in order) from:
     3. ``scribe.config.json`` / ``scribe.config.yaml`` in the current dir
 
 A `.env` file in the cwd is loaded first so ``SCRIBE_*`` vars can live there.
+
+Credentials are special: ``client_id`` and ``client_secret`` are *never* read
+from a config file. They must come from the environment (``SCRIBE_CLIENT_ID`` /
+``SCRIBE_CLIENT_SECRET``) or be passed explicitly. Putting them in a JSON/YAML
+config file is rejected to keep secrets out of files that are easy to commit.
 """
 
 from __future__ import annotations
@@ -28,6 +33,10 @@ DEFAULT_BASE_URL = "https://api.eka.care/voice"
 DEFAULT_AUTH_BASE_URL = "https://api.eka.care"
 _ENV_PREFIX = "SCRIBE_"
 _FILE_CANDIDATES = ("scribe.config.json", "scribe.config.yaml", "scribe.config.yml")
+
+# Secrets that must only ever come from the environment (or explicit kwargs),
+# never from a config file.
+_ENV_ONLY_KEYS = frozenset({"client_id", "client_secret"})
 
 
 @dataclass
@@ -105,6 +114,13 @@ def _from_file(path: str | Path | None) -> dict[str, Any]:
         loaded = json.loads(text) if text.strip() else {}
     if not isinstance(loaded, dict):
         raise ConfigError(f"Config file {resolved} must contain a JSON/YAML object.")
+    secrets_in_file = _ENV_ONLY_KEYS & set(loaded)
+    if secrets_in_file:
+        raise ConfigError(
+            f"{sorted(secrets_in_file)} must not be set in config file {resolved}; "
+            "provide them via environment variables "
+            "(SCRIBE_CLIENT_ID / SCRIBE_CLIENT_SECRET) instead."
+        )
     return loaded
 
 

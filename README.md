@@ -45,14 +45,17 @@ uv sync --extra dev --extra audio --extra server   # everything
 
 Configuration resolves with precedence **kwargs > env vars > config file > defaults**.
 
-A `scribe.config.json` (or `.yaml`):
+> **Credentials are env-only.** `client_id` and `client_secret` are **never** read
+> from a config file — loading a file that contains either key raises a `ConfigError`.
+> Supply them through the environment (or as explicit kwargs). Everything else may live
+> in the config file, the environment, or both.
+
+A `scribe.config.json` (or `.yaml`) — note: no credentials here:
 
 ```json
 {
   "base_url": "https://api.eka.care/voice",
   "auth_base_url": "https://api.eka.care",
-  "client_id": "YOUR_CLIENT_ID",
-  "client_secret": "YOUR_CLIENT_SECRET",
   "default_templates": ["soap", "medications"],
   "default_model": "lite",
   "default_language_hint": ["en"],
@@ -60,7 +63,7 @@ A `scribe.config.json` (or `.yaml`):
 }
 ```
 
-Or via environment (`.env` is auto-loaded):
+Credentials come from the environment (`.env` is auto-loaded):
 
 ```bash
 SCRIBE_CLIENT_ID=...

@@ -1,16 +1,16 @@
 # Scribe SDK config (YAML). Copy to scribe.config.yaml and fill in.
 # Resolution precedence: explicit kwargs > env vars > this file > defaults.
+#
+# NOTE: client_id / client_secret are NOT allowed here. They come from the
+# environment only — set SCRIBE_CLIENT_ID / SCRIBE_CLIENT_SECRET (e.g. in .env).
 
 base_url: https://api.eka.care/voice
 auth_base_url: https://api.eka.care
 
-client_id: YOUR_CLIENT_ID
-client_secret: YOUR_CLIENT_SECRET
-
 # Used by create_session() when templates= is not passed:
 default_templates:
-  - soap
-  - medications
+  - eka_emr_template
+  - clinical_notes_template
 default_model: lite             # lite | pro
 default_language_hint:
   - en

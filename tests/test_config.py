@@ -14,28 +14,59 @@ def test_defaults():
 
 def test_json_file(tmp_path):
     p = tmp_path / "scribe.config.json"
-    p.write_text(json.dumps({"client_id": "cid", "default_templates": ["soap", "rx"]}))
+    p.write_text(
+        json.dumps({"default_model": "pro", "default_templates": ["soap", "rx"]})
+    )
     cfg = ScribeConfig.load(path=p, load_env=False)
-    assert cfg.client_id == "cid"
+    assert cfg.default_model == "pro"
     assert cfg.default_templates == ["soap", "rx"]
 
 
 def test_yaml_file(tmp_path):
     p = tmp_path / "scribe.config.yaml"
-    p.write_text("client_id: yid\ndefault_model: pro\n")
+    p.write_text("transcript_language: en\ndefault_model: pro\n")
     cfg = ScribeConfig.load(path=p, load_env=False)
-    assert cfg.client_id == "yid"
+    assert cfg.transcript_language == "en"
     assert cfg.default_model == "pro"
 
 
 def test_env_overrides_file(tmp_path, monkeypatch):
     p = tmp_path / "scribe.config.json"
-    p.write_text(json.dumps({"client_id": "file_id"}))
+    p.write_text(json.dumps({"default_model": "lite"}))
     monkeypatch.setenv("SCRIBE_CLIENT_ID", "env_id")
     monkeypatch.setenv("SCRIBE_DEFAULT_TEMPLATES", "a,b,c")
+    monkeypatch.setenv("SCRIBE_DEFAULT_MODEL", "pro")
     cfg = ScribeConfig.load(path=p, load_env=False)
     assert cfg.client_id == "env_id"
+    assert cfg.default_model == "pro"
     assert cfg.default_templates == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("secret_key", ["client_id", "client_secret"])
+def test_credentials_in_json_file_rejected(tmp_path, secret_key):
+    p = tmp_path / "scribe.config.json"
+    p.write_text(json.dumps({secret_key: "should-not-be-here"}))
+    with pytest.raises(ConfigError, match=secret_key):
+        ScribeConfig.load(path=p, load_env=False)
+
+
+@pytest.mark.parametrize("secret_key", ["client_id", "client_secret"])
+def test_credentials_in_yaml_file_rejected(tmp_path, secret_key):
+    p = tmp_path / "scribe.config.yaml"
+    p.write_text(f"{secret_key}: should-not-be-here\n")
+    with pytest.raises(ConfigError, match=secret_key):
+        ScribeConfig.load(path=p, load_env=False)
+
+
+def test_credentials_from_env(tmp_path, monkeypatch):
+    """Secrets come from env even when a (secret-free) config file is present."""
+    p = tmp_path / "scribe.config.json"
+    p.write_text(json.dumps({"default_model": "pro"}))
+    monkeypatch.setenv("SCRIBE_CLIENT_ID", "env_id")
+    monkeypatch.setenv("SCRIBE_CLIENT_SECRET", "env_secret")
+    cfg = ScribeConfig.load(path=p, load_env=False)
+    assert cfg.client_id == "env_id"
+    assert cfg.client_secret == "env_secret"
 
 
 def test_kwargs_override_env(monkeypatch):

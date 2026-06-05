@@ -1,9 +1,7 @@
 {
   "base_url": "https://api.eka.care/voice",
   "auth_base_url": "https://api.eka.care",
-  "client_id": "YOUR_CLIENT_ID",
-  "client_secret": "YOUR_CLIENT_SECRET",
-  "default_templates": ["soap", "medications"],
+  "default_templates": ["eka_emr_template", "clinical_notes_template"],
   "default_model": "lite",
   "default_language_hint": ["en"],
   "transcript_language": "en"
