@@ -122,11 +122,15 @@ async def stream(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        # Finalize the backend session (flush + end). This can take a few
+        # seconds; by then the browser has usually already closed its socket and
+        # is polling results over HTTP, so the notify below is best-effort.
         await stream_session.stop()
     try:
         await ws.send_json({"event": "stopped", "session_id": stream_session.session_id})
         await ws.close()
-    except RuntimeError:
+    except (WebSocketDisconnect, RuntimeError):
+        # Browser closed the socket already (the common case) — nothing to do.
         pass
 
 # server the rest of the static assets (app.js, etc.).
