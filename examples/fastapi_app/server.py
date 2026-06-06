@@ -40,8 +40,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.scribe = AsyncScribeClient()
-    # session_id -> chunks uploaded so far (lets /audio be called repeatedly and
-    # /end report the right audio_files_sent total).
     app.state.chunk_counts = {}
     yield
     await app.state.scribe.aclose()
@@ -78,8 +76,6 @@ async def upload_audio(session_id: str, file: UploadFile) -> JSONResponse:
 
     data = await file.read()
     start_index = app.state.chunk_counts[session_id]
-    # upload_audio_file decodes (PyAV) + VADs (silero) locally, then POSTs the
-    # speech chunks as chunk_<start_index>, chunk_<start_index+1>, …
     uploaded = await client.upload_audio_file(
         session_id, data, start_index=start_index, end_session=False
     )
