@@ -24,9 +24,6 @@ class Model(str, Enum):
 
 
 class UploadType(str, Enum):
-    # NOTE: there is intentionally no `single` (whole-file) upload type. The SDK
-    # never sends un-VADded audio to the backend — voice activity detection runs
-    # client-side (see scribe_sdk.audio) and only speech-bounded chunks are sent.
     CHUNKED = "chunked"
     STREAM = "stream"
 
@@ -91,9 +88,6 @@ class PatchSessionRequest(_Wire):
 class CreateSessionResponse(_Wire):
     session_id: str
     status: str
-    # The backend serializes these as ISO 8601 strings; older/other shapes may
-    # send epoch ints. `int | str` accepts either and stays JSON-native, so
-    # model_dump() round-trips cleanly (no datetime serialization foot-gun).
     created_at: int | str
     expires_at: int | str
     upload_url: str | None = None
@@ -124,10 +118,7 @@ class SessionStatusResponse(_Wire):
     audio_files_processed: int | None = None
     audio_files: list[str] | None = None
     additional_data: dict[str, Any] | None = None
-    # The backend returns a LIST of single-key entries, one per generated
-    # document — `[{"<template_id>": {status, data, document_id, ...}}, ...]`.
-    # It is a list (not a dict) because one template can yield several documents,
-    # so a template_id may appear more than once.
+
     templates: list[dict[str, Any]] | None = None
     transcript: str | None = None
     processing_errors: list[dict[str, Any]] | None = None
