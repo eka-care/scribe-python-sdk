@@ -1,4 +1,4 @@
-"""Real-time WebSocket streaming (reuses the telephony stream endpoints)."""
+"""Real-time WebSocket streaming over the protocol session API."""
 
 from .ws import StreamSession, StreamUploader
 

@@ -34,6 +34,7 @@ class ResultPoller:
         start = anyio.current_time()
 
         while True:
+            iter_start = anyio.current_time()
             status = await self._sessions.get(session_id, template_id=template_id)
             if on_update is not None:
                 result = on_update(status)
@@ -53,4 +54,9 @@ class ResultPoller:
                     f"Timed out after {timeout}s waiting for session {session_id} "
                     f"(last status: {status.status})."
                 )
-            await anyio.sleep(interval)
+            # `interval` is a MAX poll rate, not an additive delay. The backend GET
+            # long-polls (holds up to ~14s, returning early when ready), so subtract
+            # the time the request already consumed. When it already took >= interval,
+            # re-poll immediately — no redundant wait stacked on the server's long-poll.
+            elapsed = anyio.current_time() - iter_start
+            await anyio.sleep(max(0.0, interval - elapsed))

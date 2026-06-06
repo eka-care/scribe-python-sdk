@@ -82,6 +82,47 @@ def test_unknown_key_rejected(tmp_path):
         ScribeConfig.load(path=p, load_env=False)
 
 
+def test_default_env_is_prod():
+    cfg = ScribeConfig.load(load_env=False)
+    assert cfg.env == "prod"
+    assert cfg.base_url == "https://api.eka.care/voice"
+    assert cfg.auth_base_url == "https://api.eka.care"
+
+
+def test_env_dev_selects_dev_hosts():
+    cfg = ScribeConfig.load(load_env=False, env="dev")
+    assert cfg.env == "dev"
+    assert cfg.base_url == "https://api.dev.eka.care/voice"
+    assert cfg.auth_base_url == "https://api.dev.eka.care"
+
+
+def test_scribe_env_var_selects_dev(monkeypatch):
+    monkeypatch.setenv("SCRIBE_ENV", "dev")
+    cfg = ScribeConfig.load(load_env=False)
+    assert cfg.env == "dev"
+    assert cfg.base_url == "https://api.dev.eka.care/voice"
+
+
+def test_explicit_base_url_overrides_env_preset():
+    cfg = ScribeConfig.load(
+        load_env=False, env="dev", base_url="https://staging.example.com/voice"
+    )
+    # explicit base_url wins; auth still falls back to the dev preset
+    assert cfg.base_url == "https://staging.example.com/voice"
+    assert cfg.auth_base_url == "https://api.dev.eka.care"
+
+
+def test_unknown_env_rejected():
+    with pytest.raises(ConfigError, match="env"):
+        ScribeConfig.load(load_env=False, env="staging")
+
+
+def test_direct_construction_env_dev():
+    cfg = ScribeConfig(env="dev")
+    assert cfg.base_url == "https://api.dev.eka.care/voice"
+    assert cfg.auth_base_url == "https://api.dev.eka.care"
+
+
 def test_require_credentials():
     with pytest.raises(ConfigError):
         ScribeConfig().require_credentials()

@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
 class SessionMode(str, Enum):
     CONSULTATION = "consultation"
     DICTATION = "dictation"
@@ -23,9 +24,6 @@ class Model(str, Enum):
 
 
 class UploadType(str, Enum):
-    # NOTE: there is intentionally no `single` (whole-file) upload type. The SDK
-    # never sends un-VADded audio to the backend — voice activity detection runs
-    # client-side (see scribe_sdk.audio) and only speech-bounded chunks are sent.
     CHUNKED = "chunked"
     STREAM = "stream"
 
@@ -90,8 +88,8 @@ class PatchSessionRequest(_Wire):
 class CreateSessionResponse(_Wire):
     session_id: str
     status: str
-    created_at: int
-    expires_at: int
+    created_at: int | str
+    expires_at: int | str
     upload_url: str | None = None
     patient_details: dict[str, Any] | None = None
 
@@ -111,16 +109,17 @@ class SessionStatusResponse(_Wire):
 
     session_id: str
     status: str
-    created_at: int | None = None
-    completed_at: int | None = None
-    expires_at: int | None = None
+    created_at: int | str | None = None
+    completed_at: int | str | None = None
+    expires_at: int | str | None = None
     model_used: str | None = None
     language_detected: str | None = None
     audio_files_received: int | None = None
     audio_files_processed: int | None = None
     audio_files: list[str] | None = None
     additional_data: dict[str, Any] | None = None
-    templates: dict[str, TemplateResult] | None = None
+
+    templates: list[dict[str, Any]] | None = None
     transcript: str | None = None
     processing_errors: list[dict[str, Any]] | None = None
     patient_details: dict[str, Any] | None = None
@@ -162,18 +161,3 @@ class TemplateInfo(_Wire):
 
 class TemplatesListResponse(_Wire):
     templates: list[TemplateInfo]
-
-class CreateStreamSessionRequest(_Wire):
-    session_id: str | None = None
-    b_id: str | None = None
-    uuid: str | None = None
-    caller_number: str | None = None
-    provider: str | None = None
-    additional_data: dict[str, Any] | None = None
-
-
-class CreateStreamSessionResponse(_Wire):
-    stream_id: str
-    wss_url: str
-    session_id: str
-    b_id: str | None = None

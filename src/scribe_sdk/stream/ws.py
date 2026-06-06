@@ -1,93 +1,116 @@
-"""WebSocket streaming over the `/v1/stream/*` endpoints.
+"""WebSocket streaming over the protocol session API.
 
-Flow (reuses the same mechanism telephony providers use):
+Streaming uses ONLY the protocol endpoints — the same `POST /v1/sessions` used
+for chunked upload, with `upload_type="stream"`:
 
-    1. POST /v1/stream/sessions {session_id?, ...}
-         -> {stream_id, wss_url, session_id}
-    2. connect wss_url, send audio frames:
+    1. POST /v1/sessions {upload_type:"stream", communication_protocol:"websocket", ...}
+         -> {session_id, upload_url}      # upload_url is the wss:// URL
+    2. connect upload_url, send audio frames:
          - raw 16-bit LE PCM, mono, 16 kHz  (default, sent as binary frames), or
          - JSON envelope: {"event":"media","media":{"payload": base64(pcm)}}
-    3. send a "stop" event (or just disconnect) to finalize; the server flushes,
-       commits the transaction, and queues transcription.
+    3. stop(): send a {"event":"stop"} frame, wait for the server to flush the
+       final chunk and close the socket, then POST /v1/sessions/{id}/end to commit
+       and start processing.
 
 Results are retrieved by polling the protocol session (`session_id`) via the
 authenticated `GET /v1/sessions/{session_id}`. The business id is taken from your
-token on both the stream-create and protocol-get sides (the SDK never sends a
-configured `b_id`), so the streamed session is written under, and read back by,
-the same business — see the README's "Streaming result retrieval" section.
+token on both the create and get sides (the SDK never sends a configured `b_id`),
+so the streamed session is written under, and read back by, the same business.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
+import anyio
 import websockets
 
+from ..errors import ScribeError
 from ..http import Transport
-from ..models import CreateStreamSessionRequest, CreateStreamSessionResponse
+from ..models import CommunicationProtocol, Model, SessionMode, UploadType
+
+if TYPE_CHECKING:
+    from ..sessions import SessionsAPI
 
 DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_FINALIZE_TIMEOUT = 10.0
+
+
+def _stream_id_from_wss(wss_url: str, fallback: str) -> str:
+    """Extract the stream_id from a wss URL of the form
+    `wss://host/voice/v1/stream/sessions/{stream_id}/audio`.
+
+    Falls back to `fallback` (the session_id) when it can't be parsed. The
+    stream_id is only used cosmetically in the JSON-envelope `start` frame; the
+    server identifies the stream from the URL path.
+    """
+    try:
+        parts = [p for p in urlparse(wss_url).path.split("/") if p]
+        if "sessions" in parts:
+            i = parts.index("sessions")
+            if i + 1 < len(parts):
+                return parts[i + 1]
+    except Exception:
+        pass
+    return fallback
 
 
 class StreamUploader:
-    def __init__(self, transport: Transport) -> None:
+    def __init__(self, transport: Transport, sessions: SessionsAPI) -> None:
         self._t = transport
-
-    async def create_session(
-        self,
-        *,
-        session_id: str | None = None,
-        b_id: str | None = None,
-        uuid: str | None = None,
-        provider: str | None = None,
-        additional_data: dict[str, Any] | None = None,
-    ) -> CreateStreamSessionResponse:
-        """Create a stream session and obtain the WSS URL.
-
-        `b_id` is not required: the backend resolves it (and `uuid`) from the
-        jwt-payload derived from your Bearer token (or your dev jwt_payload). The
-        optional `b_id` kwarg only exists for advanced/raw-backend callers that
-        need to set it explicitly (telephony-style).
-        """
-        req = CreateStreamSessionRequest(
-            session_id=session_id,
-            b_id=b_id,
-            uuid=uuid,
-            provider=provider,
-            additional_data=additional_data,
-        )
-        resp = await self._t.request(
-            "POST",
-            "/v1/stream/sessions",
-            json=req.model_dump(exclude_none=True),
-            headers={"Content-Type": "application/json"},
-            expected=(200, 201),
-        )
-        return CreateStreamSessionResponse.model_validate(resp.json())
+        self._sessions = sessions
 
     async def open(
         self,
         *,
+        templates: list[str] | None = None,
         session_id: str | None = None,
-        b_id: str | None = None,
-        uuid: str | None = None,
-        provider: str | None = None,
+        session_mode: SessionMode | str = SessionMode.DICTATION,
+        model: Model | str | None = None,
+        language_hint: list[str] | None = None,
+        transcript_language: str | None = None,
         additional_data: dict[str, Any] | None = None,
+        patient_details: dict[str, Any] | None = None,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         json_envelope: bool = False,
+        finalize_timeout: float = DEFAULT_FINALIZE_TIMEOUT,
     ) -> StreamSession:
-        """Create a stream session and return a connected `StreamSession`."""
-        meta = await self.create_session(
+        """Create a streaming session via the protocol API and connect the WebSocket.
+
+        Calls `POST /v1/sessions` with `upload_type="stream"` (the same protocol
+        create-session used by chunked upload) and returns a connected
+        `StreamSession`. The wss URL is taken from the create response's
+        `upload_url`. `b_id`/`uuid` are resolved from your token by the backend —
+        the SDK never sends them.
+        """
+        resp = await self._sessions.create(
+            upload_type=UploadType.STREAM,
+            communication_protocol=CommunicationProtocol.WEBSOCKET,
+            templates=templates,
             session_id=session_id,
-            b_id=b_id,
-            uuid=uuid,
-            provider=provider,
+            session_mode=session_mode,
+            model=model,
+            language_hint=language_hint,
+            transcript_language=transcript_language,
             additional_data=additional_data,
+            patient_details=patient_details,
         )
+        wss_url = resp.upload_url
+        if not wss_url:
+            raise ScribeError(
+                "Create-session returned no upload_url for upload_type=stream; "
+                "the backend did not provision a WebSocket stream."
+            )
         session = StreamSession(
-            meta, sample_rate=sample_rate, json_envelope=json_envelope
+            session_id=resp.session_id,
+            wss_url=wss_url,
+            sessions=self._sessions,
+            sample_rate=sample_rate,
+            json_envelope=json_envelope,
+            finalize_timeout=finalize_timeout,
         )
         await session._connect()
         return session
@@ -96,26 +119,32 @@ class StreamUploader:
 class StreamSession:
     """A connected streaming session. Use as an async context manager.
 
-        async with await client.stream.open() as s:
+        async with await client.open_stream() as s:
             await s.send_audio(pcm_bytes)
-            await s.stop()
+            await s.stop()              # flush + end the session
         result = await client.wait_for_results(s.session_id)
     """
 
     def __init__(
         self,
-        meta: CreateStreamSessionResponse,
         *,
+        session_id: str,
+        wss_url: str,
+        sessions: SessionsAPI,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         json_envelope: bool = False,
+        finalize_timeout: float = DEFAULT_FINALIZE_TIMEOUT,
     ) -> None:
-        self.meta = meta
-        self.stream_id = meta.stream_id
-        self.session_id = meta.session_id
-        self.wss_url = meta.wss_url
+        self.session_id = session_id
+        self.wss_url = wss_url
+        self.stream_id = _stream_id_from_wss(wss_url, session_id)
+        self._sessions = sessions
         self._sample_rate = sample_rate
         self._json = json_envelope
-        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._finalize_timeout = finalize_timeout
+        # websockets' connection type has moved across versions; the connection
+        # returned by websockets.connect() is duck-typed here (send/close/wait_closed).
+        self._ws: Any | None = None
         self._started = False
         self._stopped = False
 
@@ -158,24 +187,45 @@ class StreamSession:
         else:
             await ws.send(pcm)
 
-    async def stop(self, reason: str | None = None) -> None:
-        """Send the stop event and close the socket (idempotent)."""
+    async def stop(self, reason: str | None = None, *, finalize: bool = True) -> None:
+        """Stop streaming and finalize the session (idempotent).
+
+        Sends a `stop` event, waits for the server to flush the final chunk and
+        close the socket, then calls `POST /v1/sessions/{id}/end` to commit and
+        start processing — the single, canonical finalize trigger for protocol
+        streaming sessions. Pass `finalize=False` to skip the end call (e.g. to
+        end the session yourself later).
+        """
         if self._stopped:
             return
         self._stopped = True
         ws = self._ws
-        if ws is None:
-            return
-        try:
-            if self._json:
-                await ws.send(
-                    json.dumps({"event": "stop", **({"reason": reason} if reason else {})})
-                )
-            await ws.close()
-        finally:
-            self._ws = None
+        if ws is not None:
+            try:
+                # Best-effort stop signal; the server flushes on the receive-loop
+                # break (works in both binary and JSON-envelope modes).
+                try:
+                    await ws.send(
+                        json.dumps(
+                            {"event": "stop", **({"reason": reason} if reason else {})}
+                        )
+                    )
+                except Exception:
+                    pass
+                # Wait for the server to flush remaining audio to storage and
+                # close, so the subsequent end-session sees every chunk.
+                with anyio.move_on_after(self._finalize_timeout):
+                    await ws.wait_closed()
+            finally:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+                self._ws = None
+        if finalize:
+            await self._sessions.end(self.session_id, audio_files_sent=0)
 
-    def _require_ws(self) -> websockets.WebSocketClientProtocol:
+    def _require_ws(self) -> Any:
         if self._ws is None:
             raise RuntimeError("Stream is not connected (or already stopped).")
         return self._ws

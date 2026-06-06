@@ -48,13 +48,13 @@ async def test_get_session_completed_is_terminal(client, base_url):
                 "session_id": "ses_done",
                 "status": "completed",
                 "created_at": 1,
-                "templates": {"soap": {"status": "success", "data": {"s": "x"}}},
+                "templates": [{"soap": {"status": "success", "data": {"s": "x"}}}],
             },
         )
     )
     status = await client.sessions.get("ses_done")
     assert status.is_terminal and status.is_complete
-    assert status.templates["soap"].data == {"s": "x"}
+    assert status.templates[0]["soap"]["data"] == {"s": "x"}
 
 
 @respx.mock

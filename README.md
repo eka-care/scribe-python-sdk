@@ -66,9 +66,27 @@ A `scribe.config.json` (or `.yaml`) — note: no credentials here:
 Credentials come from the environment (`.env` is auto-loaded):
 
 ```bash
+SCRIBE_ENV=dev               # "prod" (default) -> api.eka.care, "dev" -> api.dev.eka.care
 SCRIBE_CLIENT_ID=...
 SCRIBE_CLIENT_SECRET=...
 SCRIBE_DEFAULT_TEMPLATES=soap,medications
+```
+
+### Dev vs prod
+
+Use `SCRIBE_ENV` (or `env="dev"` kwarg) to switch hosts without typing full URLs:
+
+| `SCRIBE_ENV` | `base_url` | `auth_base_url` |
+|---|---|---|
+| `prod` (default) | `https://api.eka.care/voice` | `https://api.eka.care` |
+| `dev` | `https://api.dev.eka.care/voice` | `https://api.dev.eka.care` |
+
+An explicit `base_url` / `auth_base_url` (env var, kwarg, or config file) always
+overrides the preset. For example:
+
+```python
+client = AsyncScribeClient(env="dev")                 # or ScribeClient(env="dev")
+# or: SCRIBE_ENV=dev in the environment / .env
 ```
 
 `default_templates` is what `create_session()` uses when you don't pass `templates=` —
@@ -149,7 +167,7 @@ async with AsyncScribeClient(config_path="scribe.config.json") as client:
 | Mode | When | How |
 |---|---|---|
 | **chunked** | files & most recordings | client VADs → `chunk_0..N` POSTs → `end` |
-| **streaming** | live/real-time | WebSocket raw-PCM frames → `stop` |
+| **streaming** | live/real-time | `POST /v1/sessions` (`stream`) → WebSocket raw-PCM frames → `stop` (flush + `end`) |
 
 Both finish with `wait_for_results(session_id)`. VAD is always client-side — there is no
 whole-file/server-VAD mode.
@@ -158,23 +176,26 @@ whole-file/server-VAD mode.
 
 ## Streaming result retrieval — how it ties together
 
-Streaming reuses the telephony `/v1/stream/*` endpoints. Results are read back through the
-**same** authenticated `GET /v1/sessions/{session_id}` path used by chunked upload, because both
-sides hit the same `voice2rx_transactions` table keyed by the composite primary key
-`(session_id, b_id)`.
+Streaming uses **only** the protocol session API — the same `POST /v1/sessions` create as chunked
+upload, with `upload_type="stream"`. The create response returns a `wss://` URL in `upload_url`;
+`open_stream()` connects to it. Results are read back through the **same** authenticated
+`GET /v1/sessions/{session_id}` path used by chunked upload, because both sides hit the same
+`voice2rx_transactions` table keyed by the composite primary key `(session_id, b_id)`.
 
 You **never configure a business id in the SDK** — `b_id` (and `uuid`) come from your token. The
-stream-create endpoint reads them from the jwt-payload the gateway injects from your Bearer token,
+protocol create-session reads them from the jwt-payload the gateway injects from your Bearer token,
 so the streamed session is written under the business the gateway authenticated, which is exactly
 what `GET /v1/sessions/{session_id}` then looks up. The protocol `GET` applies no extra
-`uuid`/owner filter. (For unauthenticated/raw-backend callers — e.g. telephony — the endpoint
-falls back to a `b_id` posted in the body; the SDK exposes an optional `b_id=` kwarg on
-`open_stream()` for that case only.)
+`uuid`/owner filter.
 
-So with token auth, streaming and `wait_for_results(stream.session_id)` work out of the box. While
-the stream is live the session reads back as `initialized`/`processing` (non-terminal, so the SDK
-keeps polling); once the stream stops, the backend commits (`user_status=commit`) and the results
-become available. Both modes use the identical key, so they behave the same way.
+Finalize is explicit: `stop()` sends a `stop` frame, waits for the server to flush the last chunk
+and close the socket, then calls `POST /v1/sessions/{session_id}/end` to commit and start
+processing. (Closing the socket alone does **not** commit a protocol streaming session — the
+end call is the single canonical trigger.) So with token auth, streaming and
+`wait_for_results(stream.session_id)` work out of the box. While the stream is live the session
+reads back as `initialized`/`processing` (non-terminal, so the SDK keeps polling); after `stop()`
+the backend commits (`user_status=commit`) and the results become available. Both modes use the
+identical key, so they behave the same way.
 
 ---
 
