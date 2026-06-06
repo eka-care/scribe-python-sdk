@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
 class SessionMode(str, Enum):
     CONSULTATION = "consultation"
     DICTATION = "dictation"
@@ -90,8 +91,11 @@ class PatchSessionRequest(_Wire):
 class CreateSessionResponse(_Wire):
     session_id: str
     status: str
-    created_at: int
-    expires_at: int
+    # The backend serializes these as ISO 8601 strings; older/other shapes may
+    # send epoch ints. `int | str` accepts either and stays JSON-native, so
+    # model_dump() round-trips cleanly (no datetime serialization foot-gun).
+    created_at: int | str
+    expires_at: int | str
     upload_url: str | None = None
     patient_details: dict[str, Any] | None = None
 
@@ -111,16 +115,20 @@ class SessionStatusResponse(_Wire):
 
     session_id: str
     status: str
-    created_at: int | None = None
-    completed_at: int | None = None
-    expires_at: int | None = None
+    created_at: int | str | None = None
+    completed_at: int | str | None = None
+    expires_at: int | str | None = None
     model_used: str | None = None
     language_detected: str | None = None
     audio_files_received: int | None = None
     audio_files_processed: int | None = None
     audio_files: list[str] | None = None
     additional_data: dict[str, Any] | None = None
-    templates: dict[str, TemplateResult] | None = None
+    # The backend returns a LIST of single-key entries, one per generated
+    # document — `[{"<template_id>": {status, data, document_id, ...}}, ...]`.
+    # It is a list (not a dict) because one template can yield several documents,
+    # so a template_id may appear more than once.
+    templates: list[dict[str, Any]] | None = None
     transcript: str | None = None
     processing_errors: list[dict[str, Any]] | None = None
     patient_details: dict[str, Any] | None = None
@@ -162,18 +170,3 @@ class TemplateInfo(_Wire):
 
 class TemplatesListResponse(_Wire):
     templates: list[TemplateInfo]
-
-class CreateStreamSessionRequest(_Wire):
-    session_id: str | None = None
-    b_id: str | None = None
-    uuid: str | None = None
-    caller_number: str | None = None
-    provider: str | None = None
-    additional_data: dict[str, Any] | None = None
-
-
-class CreateStreamSessionResponse(_Wire):
-    stream_id: str
-    wss_url: str
-    session_id: str
-    b_id: str | None = None

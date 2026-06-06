@@ -52,7 +52,7 @@ class AsyncScribeClient:
 
         self.discovery = DiscoveryAPI(self._transport)
         self.sessions = SessionsAPI(self._transport)
-        self.stream = StreamUploader(self._transport)
+        self.stream = StreamUploader(self._transport, self.sessions)
         self._chunked = ChunkedUploader(self._transport)
         self._poller = ResultPoller(self.sessions)
 
@@ -158,7 +158,15 @@ class AsyncScribeClient:
         await self.sessions.end(session_id, audio_files_sent=audio_files_sent)
 
     async def open_stream(self, **kwargs: Any) -> StreamSession:
-        """Open a connected WebSocket streaming session."""
+        """Open a connected WebSocket streaming session.
+
+        Creates the session through the protocol `POST /v1/sessions`
+        (`upload_type="stream"`) — the same create-session as chunked upload —
+        and connects to the wss URL it returns. Accepts the same session kwargs
+        as `create_session` (templates, model, language_hint, …) plus
+        `sample_rate` / `json_envelope`. Call `stop()` (or exit the context) to
+        flush and end the session, then `wait_for_results(session_id)`.
+        """
         return await self.stream.open(**kwargs)
 
     async def wait_for_results(

@@ -18,10 +18,15 @@ const $ = (id) => document.getElementById(id);
 
 let sessionId = null;
 
-// Poll the relay every 1s until the session reaches a terminal status.
+// Poll the relay until the session reaches a terminal status. 1s is a MAX rate,
+// not an added delay: the backend GET long-polls (holds up to ~14s, returning the
+// moment results are ready), so we subtract the time the request already took. When
+// it already took >= 1s, we re-poll immediately — no redundant wait on top.
 async function pollResults(sid) {
   const terminal = new Set(["completed", "partial", "failed", "expired"]);
+  const POLL_MS = 1000;
   for (let i = 0; i < 600; i++) {
+    const t0 = performance.now();
     const res = await fetch(`/api/sessions/${sid}/results`);
     const body = await res.json();
     setStatus(`processing… (${body.status})`);
@@ -30,7 +35,8 @@ async function pollResults(sid) {
       showResult(body);
       return;
     }
-    await new Promise((r) => setTimeout(r, 1000)); // wait 1s (client-side)
+    const wait = Math.max(0, POLL_MS - (performance.now() - t0));
+    await new Promise((r) => setTimeout(r, wait));
   }
   setStatus("timed out waiting for results");
 }

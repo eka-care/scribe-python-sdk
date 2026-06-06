@@ -11,6 +11,11 @@ Config file may be JSON or YAML and is discovered (in order) from:
 
 A `.env` file in the cwd is loaded first so ``SCRIBE_*`` vars can live there.
 
+Pick an environment with ``SCRIBE_ENV`` (or ``env=``): ``prod`` (default) targets
+``https://api.eka.care`` and ``dev`` targets ``https://api.dev.eka.care``. An
+explicit ``base_url`` / ``auth_base_url`` (``SCRIBE_BASE_URL`` /
+``SCRIBE_AUTH_BASE_URL``, kwarg, or config file) always overrides the preset.
+
 Credentials are special: ``client_id`` and ``client_secret`` are *never* read
 from a config file. They must come from the environment (``SCRIBE_CLIENT_ID`` /
 ``SCRIBE_CLIENT_SECRET``) or be passed explicitly. Putting them in a JSON/YAML
@@ -31,6 +36,15 @@ from .errors import ConfigError
 
 DEFAULT_BASE_URL = "https://api.eka.care/voice"
 DEFAULT_AUTH_BASE_URL = "https://api.eka.care"
+DEFAULT_ENV = "prod"
+
+# Named environments: `SCRIBE_ENV` (or env=) picks the host pair so you don't
+# have to spell out full URLs. An explicit base_url / auth_base_url always wins
+# over the preset.
+_ENV_PRESETS: dict[str, tuple[str, str]] = {
+    "prod": (DEFAULT_BASE_URL, DEFAULT_AUTH_BASE_URL),
+    "dev": ("https://api.dev.eka.care/voice", "https://api.dev.eka.care"),
+}
 _ENV_PREFIX = "SCRIBE_"
 _FILE_CANDIDATES = ("scribe.config.json", "scribe.config.yaml", "scribe.config.yml")
 
@@ -47,6 +61,7 @@ class ScribeConfig:
     client_id: str | None = None
     client_secret: str | None = None
     api_key: str | None = None
+    env: str = DEFAULT_ENV  # "prod" | "dev" — selects the default host pair (SCRIBE_ENV)
     base_url: str = DEFAULT_BASE_URL  # protocol base, e.g. https://api.eka.care/voice
     auth_base_url: str = DEFAULT_AUTH_BASE_URL  # connect-auth host
 
@@ -65,6 +80,21 @@ class ScribeConfig:
     request_timeout: float = 60.0
     poll_interval: float = 1.0  # wait 1s between result polls (client-side)
     poll_timeout: float = 600.0
+
+    def __post_init__(self) -> None:
+        env = (self.env or DEFAULT_ENV).lower()
+        if env not in _ENV_PRESETS:
+            raise ConfigError(
+                f"Unknown env {self.env!r}. Use one of: {sorted(_ENV_PRESETS)}."
+            )
+        self.env = env
+        preset_base, preset_auth = _ENV_PRESETS[env]
+        # Apply the preset only when the URL is still at its default — an explicit
+        # base_url / auth_base_url (kwarg, env var, or config file) always wins.
+        if self.base_url == DEFAULT_BASE_URL:
+            self.base_url = preset_base
+        if self.auth_base_url == DEFAULT_AUTH_BASE_URL:
+            self.auth_base_url = preset_auth
 
     @classmethod
     def load(
@@ -147,6 +177,7 @@ _ENV_FIELDS: dict[str, tuple[str, Any]] = {
     f"{_ENV_PREFIX}CLIENT_ID": ("client_id", str),
     f"{_ENV_PREFIX}CLIENT_SECRET": ("client_secret", str),
     f"{_ENV_PREFIX}API_KEY": ("api_key", str),
+    f"{_ENV_PREFIX}ENV": ("env", str),
     f"{_ENV_PREFIX}BASE_URL": ("base_url", str),
     f"{_ENV_PREFIX}AUTH_BASE_URL": ("auth_base_url", str),
     f"{_ENV_PREFIX}DEFAULT_TEMPLATES": ("default_templates", "csv"),
