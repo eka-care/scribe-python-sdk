@@ -1,195 +1,204 @@
 # scribe-python-sdk
 
-Python SDK for the **MedScribeAlliance Protocol v0.1** — the scribe protocol exposed by
-Voice2Rx / eka.care. It turns medical audio (consultations, dictation) into structured
-template results (SOAP notes, medication lists, etc.).
+Turn medical audio into structured notes (SOAP, medication lists, EMR templates) in a few lines of Python.
 
-Use it from your server, a CLI, or behind a FastAPI relay to:
-
-- **create sessions** with your configured default templates (or per-call overrides),
-- **send audio two ways** — *chunked* (client-side VAD → `chunk_0`, `chunk_1`, …) or
-  *streaming* (real-time WebSocket),
-- **poll for results**.
-
-**Voice activity detection always runs client-side.** The SDK decodes and VADs audio
-on your machine and POSTs only speech-bounded chunks (or streams raw PCM) — the scribe
-backend never receives an un-VADded whole file. There is deliberately no single/whole-file
-upload.
-
-Async-first (`httpx` + `websockets`) with a synchronous facade for scripts and the CLI.
-
----
-
-## Install (uv)
-
-This project uses [uv](https://docs.astral.sh/uv/).
-
-```bash
-# core SDK (pure-Python: sessions, upload, streaming, results)
-uv add scribe-python-sdk
-
-# with mic capture + silero VAD chunking (native libs: portaudio, onnxruntime)
-uv add "scribe-python-sdk[audio]"
-```
-
-Working inside this repo:
-
-```bash
-uv sync --extra dev            # core + dev tooling
-uv sync --extra dev --extra audio --extra server   # everything
-```
-
----
-
-## Configure
-
-Configuration resolves with precedence **kwargs > env vars > config file > defaults**.
-
-> **Credentials are env-only.** `client_id` and `client_secret` are **never** read
-> from a config file — loading a file that contains either key raises a `ConfigError`.
-> Supply them through the environment (or as explicit kwargs). Everything else may live
-> in the config file, the environment, or both.
-
-A `scribe.config.json` (or `.yaml`) — note: no credentials here:
-
-```json
-{
-  "base_url": "https://api.eka.care/voice",
-  "auth_base_url": "https://api.eka.care",
-  "default_templates": ["soap", "medications"],
-  "default_model": "lite",
-  "default_language_hint": ["en"],
-  "transcript_language": "en"
-}
-```
-
-Credentials come from the environment (`.env` is auto-loaded):
-
-```bash
-SCRIBE_ENV=dev               # "prod" (default) -> api.eka.care, "dev" -> api.dev.eka.care
-SCRIBE_CLIENT_ID=...
-SCRIBE_CLIENT_SECRET=...
-SCRIBE_DEFAULT_TEMPLATES=soap,medications
-```
-
-### Dev vs prod
-
-Use `SCRIBE_ENV` (or `env="dev"` kwarg) to switch hosts without typing full URLs:
-
-| `SCRIBE_ENV` | `base_url` | `auth_base_url` |
-|---|---|---|
-| `prod` (default) | `https://api.eka.care/voice` | `https://api.eka.care` |
-| `dev` | `https://api.dev.eka.care/voice` | `https://api.dev.eka.care` |
-
-An explicit `base_url` / `auth_base_url` (env var, kwarg, or config file) always
-overrides the preset. For example:
+It talks to the **MedScribeAlliance Protocol v0.1** scribe backend (Voice2Rx / eka.care) for you: create a session, send audio, get results. Async-first, with a plain synchronous client for scripts.
 
 ```python
-client = AsyncScribeClient(env="dev")                 # or ScribeClient(env="dev")
-# or: SCRIBE_ENV=dev in the environment / .env
+from scribe_sdk import ScribeClient
+
+with ScribeClient() as client:
+    s = client.create_session()
+    client.upload_audio_file(s.session_id, "visit.wav")
+    result = client.wait_for_results(s.session_id)
+    print(result.templates)
 ```
 
-`default_templates` is what `create_session()` uses when you don't pass `templates=` —
-so configured clients get the right result templates automatically.
-
-### Authentication
-
-Production: the SDK exchanges `client_id` + `client_secret` at
-`{auth_base_url}/connect-auth/v1/account/login` for a Bearer token and sends it to the
-public gateway, which validates it and injects the `jwt-payload` header for the backend.
-
-Local/dev against a raw backend (no gateway): set a `jwt_payload` dict in config to send
-that header directly and skip login.
+That's a full transcription-to-notes round trip. Everything below is detail.
 
 ---
 
-## Usage
+## Integrate in 60 seconds
 
-Every flow keeps the steps separated — **start session → send audio → end session →
-poll results** (the poller waits 1s between checks).
+**1. Install**
 
-### File upload with client-side VAD (sync)
+```bash
+uv add "scribe-python-sdk[audio]"     # [audio] adds mic capture + file decoding
+# or: pip install "scribe-python-sdk[audio]"
+```
+
+**2. Set credentials** — create a `.env` file next to your script:
+
+```bash
+SCRIBE_ENV=prod                                  # "dev" -> api.dev.eka.care
+SCRIBE_CLIENT_ID=your-client-id
+SCRIBE_CLIENT_SECRET=your-client-secret
+SCRIBE_DEFAULT_TEMPLATES=eka_emr_template,clinical_notes_template
+```
+
+> Get your `client_id` / `client_secret` from eka.care. They live **only** in the
+> environment — the SDK refuses to read them from a config file.
+
+**3. Run** the snippet at the top of this README. Done — no other setup.
+
+The SDK auto-loads `.env`, logs in, picks the right host from `SCRIBE_ENV`, and uses
+`SCRIBE_DEFAULT_TEMPLATES` so you don't repeat them on every call.
+
+---
+
+## The three ways to send audio
+
+Pick one — they all finish the same way: `wait_for_results(session_id)`.
+
+### 1. A file (simplest)
 
 ```python
-from scribe_sdk import ScribeClient   # decode + VAD need the [audio] extra
-
-with ScribeClient(config_path="scribe.config.json") as client:
-    s = client.create_session(upload_type="chunked", communication_protocol="http")
-    n = client.upload_audio_file(s.session_id, "visit.wav", end_session=False)  # VAD locally
-    client.end_session(s.session_id, audio_files_sent=n)
+with ScribeClient() as client:
+    s = client.create_session()
+    client.upload_audio_file(s.session_id, "visit.wav")   # decode + VAD locally, upload
     result = client.wait_for_results(s.session_id)
     print(result.status, result.templates)
 ```
 
-### File / PCM upload (async)
+Accepts `.wav/.mp3/.m4a/.webm/.ogg` (a path or raw `bytes`).
+
+### 2. Raw PCM you already captured
 
 ```python
-from scribe_sdk import AsyncScribeClient   # requires [audio]
-
-async with AsyncScribeClient(config_path="scribe.config.json") as client:
-    s = await client.create_session(upload_type="chunked", communication_protocol="http")
-    # from a file/bytes …
-    n = await client.upload_audio_file(s.session_id, "visit.wav", end_session=False)
-    # … or from raw 16-bit mono PCM you already captured:
-    # n = await client.upload_pcm(s.session_id, pcm_bytes, sample_rate=16000, end_session=False)
-    await client.end_session(s.session_id, audio_files_sent=n)
-    result = await client.wait_for_results(s.session_id)
+with ScribeClient() as client:
+    s = client.create_session()
+    client.upload_pcm(s.session_id, pcm_bytes, sample_rate=16000)
+    result = client.wait_for_results(s.session_id)
 ```
 
-> Lower-level: pass your own VAD chunk iterator to `upload_chunks(...)` — see
-> `scribe_sdk.audio.vad_chunks_from_file` / `vad_chunks_from_pcm`.
-
-### Streaming (async, real-time WebSocket)
+### 3. Live streaming over WebSocket (real-time)
 
 ```python
-async with AsyncScribeClient(config_path="scribe.config.json") as client:
+from scribe_sdk import AsyncScribeClient
+
+async with AsyncScribeClient() as client:
     async with await client.open_stream() as stream:
-        async for pcm_frame in mic_frames():        # raw 16-bit LE PCM, mono, 16 kHz
-            await stream.send_audio(pcm_frame)
-        await stream.stop()
+        async for frame in mic_frames():       # raw 16-bit LE PCM, mono, 16 kHz
+            await stream.send_audio(frame)
+        await stream.stop()                    # flush + end the session
     result = await client.wait_for_results(stream.session_id)
 ```
+
+> Streaming is async-only. Everything else has both a sync (`ScribeClient`) and
+> async (`AsyncScribeClient`) flavor with identical method names — add `await`.
+
+That's the whole surface. `create_session` → send audio → `wait_for_results`.
+
+---
+
+## Reading the result
+
+`wait_for_results()` returns a `SessionStatusResponse`:
+
+```python
+result = client.wait_for_results(s.session_id)
+
+result.status        # "completed" | "partial" | "failed" | ...
+result.transcript    # full transcript text
+result.templates     # list of {template_id: {...}} — one entry per generated document
+```
+
+`templates` is a **list** of single-key dicts (one template can yield several documents):
+
+```python
+for doc in result.templates:
+    for template_id, payload in doc.items():
+        print(template_id, payload["status"], payload.get("data"))
+```
+
+---
+
+## Configuration
+
+Everything has a sensible default. The only thing you *must* provide is credentials.
+
+Resolution order (highest wins): **explicit kwargs › environment / `.env` › config file › defaults**.
+
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `SCRIBE_CLIENT_ID` / `SCRIBE_CLIENT_SECRET` | credentials (**env-only**) |
+| `SCRIBE_ENV` | `prod` (default, `api.eka.care`) or `dev` (`api.dev.eka.care`) |
+| `SCRIBE_DEFAULT_TEMPLATES` | comma-separated templates used when you don't pass `templates=` |
+| `SCRIBE_DEFAULT_MODEL` | `lite` (default) or `pro` |
+| `SCRIBE_BASE_URL` / `SCRIBE_AUTH_BASE_URL` | override hosts directly (wins over `SCRIBE_ENV`) |
+
+### Optional config file
+
+Put non-secret defaults in `scribe.config.json` (or `.yaml`) in your working dir — it's
+picked up automatically:
+
+```json
+{
+  "default_templates": ["eka_emr_template", "clinical_notes_template"],
+  "default_model": "pro",
+  "transcript_language": "en"
+}
+```
+
+### Or pass it inline
+
+```python
+client = ScribeClient(
+    env="dev",
+    default_templates=["soap"],
+    client_id="...",          # or leave to env
+    client_secret="...",
+)
+```
+
+### Per-call overrides
+
+`create_session()` takes the same options when you want to override config for one session:
+
+```python
+s = client.create_session(
+    templates=["soap"],
+    model="pro",
+    session_mode="consultation",        # or "dictation" (default)
+    language_hint=["en", "hi"],
+    patient_details={"name": "..."},
+)
+```
+
+---
+
+## Authentication, briefly
+
+- **Production:** the SDK exchanges `client_id` + `client_secret` for a Bearer token at
+  `{auth_base_url}/connect-auth/v1/account/login` automatically. You never touch tokens.
+- **Local backend (no gateway):** pass `jwt_payload={...}` to send the `jwt-payload`
+  header directly and skip login.
+
+Your business id (`b_id`) is derived from your token — you never configure it.
 
 ---
 
 ## Examples
 
-- `examples/cli/` — the bundled `scribe` CLI: `--mode chunked|stream` (mic/file VAD + WS).
-- `examples/fastapi_app/` — FastAPI server + minimal UI (start session, upload file, mic
-  record, live stream, end, poll). VAD runs in the SDK on the server; keeps
-  `client_id`/`secret` server-side.
-- `examples/server_side/` — minimal "call the SDK from your backend" script.
+Runnable, in `examples/`:
+
+- `examples/server_side/file_upload.py` — call the SDK from your backend (start → upload → poll).
+- `examples/fastapi_app/` — a FastAPI server + browser UI (record / upload / live-stream / poll).
+  Credentials stay server-side; the browser talks only to your server.
+- `examples/cli/` — the bundled `scribe` CLI (`--mode chunked|stream`).
 
 ---
 
-## Upload modes at a glance
+## How it works
 
-| Mode | When | How |
-|---|---|---|
-| **chunked** | files & most recordings | client VADs → `chunk_0..N` POSTs → `end` |
-| **streaming** | live/real-time | `POST /v1/sessions` (`stream`) → WebSocket raw-PCM frames → `stop` (flush + `end`) |
-
-Both finish with `wait_for_results(session_id)`. VAD is always client-side — there is no
-whole-file/server-VAD mode.
-
----
-
-## Streaming result retrieval — how it ties together
-
-Streaming uses **only** the protocol session API — the same `POST /v1/sessions` create as chunked
-upload, with `upload_type="stream"`. The create response returns a `wss://` URL in `upload_url`;
-`open_stream()` connects to it. Results are read back through the **same** authenticated
-`GET /v1/sessions/{session_id}` path used by chunked upload, because both sides hit the same
-`voice2rx_transactions` table keyed by the composite primary key `(session_id, b_id)`.
-
-Finalize is explicit: `stop()` sends a `stop` frame, waits for the server to flush the last chunk
-and close the socket, then calls `POST /v1/sessions/{session_id}/end` to commit and start
-processing. (Closing the socket alone does **not** commit a protocol streaming session — the
-end call is the single canonical trigger.) So with token auth, streaming and
-`wait_for_results(stream.session_id)` work out of the box. While the stream is live the session
-reads back as `initialized`/`processing` (non-terminal, so the SDK keeps polling); after `stop()`
-the backend commits (`user_status=commit`) and the results become available. Both modes use the
-identical key, so they behave the same way.
+Voice-activity detection always runs **client-side**: `upload_audio_file` / `upload_pcm` /
+streaming decode and VAD on your machine and send only speech-bounded chunks (or raw PCM
+frames) — the backend never receives an un-VADded whole file. Chunked and streaming both go
+through the same protocol session API (`POST /v1/sessions`) and read results back through the
+same `GET /v1/sessions/{id}`, so they behave identically. For streaming, `stop()` flushes the
+last chunk and calls `end` — the single trigger that commits the session and starts processing.
 
 ---
 
@@ -197,7 +206,7 @@ identical key, so they behave the same way.
 
 ```bash
 uv sync --extra dev
-uv run pytest                 # unit tests (mocked HTTP, no backend needed)
+uv run pytest          # mocked HTTP, no backend needed
 uv run ruff check .
 uv run mypy src
 ```
