@@ -182,12 +182,6 @@ upload, with `upload_type="stream"`. The create response returns a `wss://` URL 
 `GET /v1/sessions/{session_id}` path used by chunked upload, because both sides hit the same
 `voice2rx_transactions` table keyed by the composite primary key `(session_id, b_id)`.
 
-You **never configure a business id in the SDK** — `b_id` (and `uuid`) come from your token. The
-protocol create-session reads them from the jwt-payload the gateway injects from your Bearer token,
-so the streamed session is written under the business the gateway authenticated, which is exactly
-what `GET /v1/sessions/{session_id}` then looks up. The protocol `GET` applies no extra
-`uuid`/owner filter.
-
 Finalize is explicit: `stop()` sends a `stop` frame, waits for the server to flush the last chunk
 and close the socket, then calls `POST /v1/sessions/{session_id}/end` to commit and start
 processing. (Closing the socket alone does **not** commit a protocol streaming session — the
